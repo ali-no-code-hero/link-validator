@@ -6,31 +6,18 @@ import { createServiceRoleClient } from "@/lib/supabase/server";
 
 export const maxDuration = 60;
 
-function isTraceSuccess(
-  statusCode: number | null,
-  extra: Record<string, unknown>,
-): boolean {
-  if (extra.error) {
-    return false;
-  }
-  if (statusCode === null) {
-    return false;
-  }
-  return statusCode >= 200 && statusCode < 400;
+/** Playwright navigation finished without throwing (we captured hops / errors in extra). */
+function isTraceCompleted(extra: Record<string, unknown>): boolean {
+  return !extra.error;
 }
 
-function explainFailure(
-  statusCode: number | null,
-  extra: Record<string, unknown>,
-): string {
+function isHttpOk(statusCode: number | null): boolean {
+  return statusCode !== null && statusCode >= 200 && statusCode < 400;
+}
+
+function explainTraceFailure(extra: Record<string, unknown>): string {
   if (extra.error) {
     return `navigation_error:${String(extra.error)}`;
-  }
-  if (statusCode === null) {
-    return "status_code_null (no Response from page.goto — see trace.goto logs)";
-  }
-  if (statusCode >= 400) {
-    return `http_${statusCode}`;
   }
   return "unknown";
 }
@@ -90,6 +77,8 @@ export async function POST(
       extra_tracking_data: {
         error: message,
         failureStage: "playwright_launch_or_trace",
+        traceCompleted: false,
+        httpOk: false,
         logHint: "Check Vercel function logs for link-validator:playwright.launch or trace",
       },
     });
@@ -104,29 +93,38 @@ export async function POST(
 
     return NextResponse.json({
       ok: false,
+      httpOk: false,
+      traceCompleted: false,
       jobId: job.id,
       error: message,
     });
   }
 
-  const success = isTraceSuccess(trace.status_code, trace.extra_tracking_data);
-  const failureReason = explainFailure(trace.status_code, trace.extra_tracking_data);
+  const traceCompleted = isTraceCompleted(trace.extra_tracking_data);
+  const httpOk = isHttpOk(trace.status_code);
+  const traceFailureReason = traceCompleted ? undefined : explainTraceFailure(trace.extra_tracking_data);
 
   logInfo("api.click", "trace_result", {
     jobId: job.id,
     job_eid: job.job_eid,
-    success,
-    failureReason,
+    traceCompleted,
+    httpOk,
     status_code: trace.status_code,
     chainLength: trace.redirect_chain.length,
     hasExtraError: Boolean(trace.extra_tracking_data.error),
   });
 
-  if (!success) {
-    logWarn("api.click", "marking_failed", {
+  if (!traceCompleted) {
+    logWarn("api.click", "marking_failed_trace", {
       jobId: job.id,
-      failureReason,
+      traceFailureReason,
       status_code: trace.status_code,
+    });
+  } else if (!httpOk) {
+    logInfo("api.click", "trace_ok_http_not_ok", {
+      jobId: job.id,
+      status_code: trace.status_code,
+      note: "Partner returned non-2xx/3xx; chain still stored for verification.",
     });
   }
 
@@ -142,7 +140,9 @@ export async function POST(
     status_code: trace.status_code,
     extra_tracking_data: {
       ...trace.extra_tracking_data,
-      ...(success ? {} : { failureReason }),
+      traceCompleted,
+      httpOk,
+      ...(traceCompleted || !traceFailureReason ? {} : { failureReason: traceFailureReason }),
     },
   });
 
@@ -153,7 +153,7 @@ export async function POST(
 
   const { error: updateError } = await supabase
     .from("jobs_fetched")
-    .update({ processing_status: success ? "completed" : "failed" })
+    .update({ processing_status: traceCompleted ? "completed" : "failed" })
     .eq("id", job.id);
 
   if (updateError) {
@@ -161,10 +161,12 @@ export async function POST(
     return NextResponse.json({ error: updateError.message }, { status: 500 });
   }
 
-  logInfo("api.click", "done", { jobId: job.id, success });
+  logInfo("api.click", "done", { jobId: job.id, traceCompleted, httpOk });
 
   return NextResponse.json({
-    ok: success,
+    ok: traceCompleted,
+    httpOk,
+    traceCompleted,
     jobId: job.id,
     job_eid: job.job_eid,
     final_destination_url: trace.final_destination_url,
@@ -172,6 +174,6 @@ export async function POST(
     status_code: trace.status_code,
     ip_address_used: trace.ip_address_used,
     user_agent_device_id: trace.user_agent_device_id,
-    failureReason: success ? undefined : failureReason,
+    failureReason: traceFailureReason,
   });
 }

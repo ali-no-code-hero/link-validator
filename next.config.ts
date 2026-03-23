@@ -6,7 +6,7 @@ import type { NextConfig } from "next";
  * /var/task bundle was missing .../chromium/bin → "brotli files" error at runtime.
  */
 const nextConfig: NextConfig = {
-  serverExternalPackages: ["@sparticuz/chromium", "playwright-core", "playwright"],
+  serverExternalPackages: ["@sparticuz/chromium", "playwright-core", "playwright", "undici"],
   outputFileTracingIncludes: {
     // Match App Router API routes (picomatch). If clicks still miss binaries on deploy,
     // temporarily use "/*" instead of "/api/**" (adds ~60MB to traces).

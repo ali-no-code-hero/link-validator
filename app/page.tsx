@@ -220,7 +220,9 @@ export default function Home() {
               </span>
               <span>Total: {status.summary.total}</span>
               <span className="text-amber-300/90">Pending: {status.summary.pending}</span>
-              <span className="text-emerald-300/90">OK: {status.summary.completed}</span>
+              <span className="text-emerald-300/90" title="Finished Playwright run (including final HTTP 403 etc.)">
+                Traced: {status.summary.completed}
+              </span>
               <span className="text-red-300/90">Failed: {status.summary.failed}</span>
             </div>
 
@@ -240,12 +242,15 @@ export default function Home() {
                     const chain = row.latestLog?.redirect_chain;
                     const chainLen = Array.isArray(chain) ? chain.length : 0;
                     const finalUrl = row.latestLog?.final_destination_url ?? "—";
-                    const ok =
-                      row.processing_status === "completed"
-                        ? true
-                        : row.processing_status === "failed"
-                          ? false
-                          : null;
+                    const extra = row.latestLog?.extra_tracking_data;
+                    const httpOk =
+                      typeof extra?.httpOk === "boolean"
+                        ? extra.httpOk
+                        : row.latestLog?.status_code != null &&
+                          row.latestLog.status_code >= 200 &&
+                          row.latestLog.status_code < 400;
+                    const traceDone = row.processing_status === "completed";
+                    const traceFailed = row.processing_status === "failed";
                     return (
                       <tr key={row.id} className="align-top">
                         <td className="px-4 py-3 text-zinc-200">
@@ -254,17 +259,24 @@ export default function Home() {
                         </td>
                         <td className="px-4 py-3 font-mono text-xs text-zinc-400">{row.job_eid}</td>
                         <td className="px-4 py-3">
-                          {ok === null ? (
+                          {!traceDone && !traceFailed ? (
                             <span className="rounded-full bg-amber-950/60 px-2 py-0.5 text-xs text-amber-200 ring-1 ring-amber-800/60">
                               Pending
                             </span>
-                          ) : ok ? (
-                            <span className="rounded-full bg-emerald-950/60 px-2 py-0.5 text-xs text-emerald-200 ring-1 ring-emerald-800/60">
-                              Success
-                            </span>
-                          ) : (
+                          ) : traceFailed ? (
                             <span className="rounded-full bg-red-950/60 px-2 py-0.5 text-xs text-red-200 ring-1 ring-red-800/60">
                               Failed
+                            </span>
+                          ) : httpOk ? (
+                            <span className="rounded-full bg-emerald-950/60 px-2 py-0.5 text-xs text-emerald-200 ring-1 ring-emerald-800/60">
+                              OK
+                            </span>
+                          ) : (
+                            <span
+                              className="rounded-full bg-amber-950/60 px-2 py-0.5 text-xs text-amber-100 ring-1 ring-amber-800/60"
+                              title="Redirect chain stored; final HTTP status is not 2xx/3xx"
+                            >
+                              Traced · HTTP {row.latestLog?.status_code ?? "?"}
                             </span>
                           )}
                         </td>

@@ -3,7 +3,7 @@ export type ProcessingStatus = "pending" | "completed" | "failed";
 export type RedirectChainEntry = {
   url: string;
   status?: number;
-  type: "http_redirect" | "navigation" | "request";
+  type: "http_redirect" | "navigation" | "request" | "document_response";
 };
 
 export type JobsFetchedRow = {
