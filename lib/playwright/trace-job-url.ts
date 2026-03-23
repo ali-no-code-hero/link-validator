@@ -1,6 +1,6 @@
 import type { Frame, Request, Response } from "playwright-core";
 import type { RedirectChainEntry } from "@/lib/types/database";
-import { fetchOutboundIp } from "@/lib/outbound-ip";
+import { compareDirectAndProxyEgress, fetchOutboundIp } from "@/lib/outbound-ip";
 import { launchChromiumBrowser } from "@/lib/playwright/launch-browser";
 import {
   getOptionalProxyUrl,
@@ -8,8 +8,7 @@ import {
   proxyEndpointForLog,
 } from "@/lib/proxy";
 import { logError, logInfo, logWarn, truncateUrl } from "@/lib/server-log";
-
-export const LINK_VALIDATOR_USER_AGENT = "Link Validator - CollabWork";
+import { REALISTIC_BROWSER_USER_AGENT } from "@/lib/user-agent";
 
 const GOTO_TIMEOUT_MS = 50_000;
 const MAX_RESPONSE_HEADER_KEYS = 24;
@@ -105,23 +104,48 @@ export async function traceJobUrl(initialUrl: string, deviceId: string): Promise
     ...(proxyUrl ? { proxyServer: proxyEndpointForLog(proxyUrl) } : {}),
   });
 
-  const ip_address_used = await fetchOutboundIp(proxyUrl);
-  logInfo("trace", "outbound_ip", {
-    ip: ip_address_used ?? "(null)",
-    viaProxy: Boolean(proxyUrl),
-  });
-
   const extra: Record<string, unknown> = {
-    userAgent: LINK_VALIDATOR_USER_AGENT,
+    browserUserAgent: REALISTIC_BROWSER_USER_AGENT,
+    clientInstrumentation: "CollabWork Link Validator",
     deviceId,
     proxyUsed: Boolean(playwrightProxy),
     ...(proxyUrl ? { proxyServer: proxyEndpointForLog(proxyUrl) } : {}),
   };
 
+  let ip_address_used: string | null = null;
+  if (proxyUrl) {
+    const egress = await compareDirectAndProxyEgress(proxyUrl);
+    ip_address_used = egress.proxyIp;
+    extra.proxyEgressCheck = {
+      directEgressIp: egress.directIp,
+      proxyEgressIp: egress.proxyIp,
+      proxyIpDistinctFromDirect: egress.proxyIpDistinctFromDirect,
+      proxySameAsDirectSuspected: egress.proxySameAsDirectSuspected,
+    };
+    if (egress.proxySameAsDirectSuspected) {
+      logWarn("trace", "proxy_ip_matches_direct_egress", {
+        ip: egress.directIp,
+        proxyServer: proxyEndpointForLog(proxyUrl),
+      });
+    } else if (egress.proxyIpDistinctFromDirect) {
+      logInfo("trace", "proxy_egress_distinct_from_direct", {
+        direct: egress.directIp,
+        proxy: egress.proxyIp,
+      });
+    }
+  } else {
+    ip_address_used = await fetchOutboundIp(null);
+  }
+
+  logInfo("trace", "outbound_ip", {
+    ip: ip_address_used ?? "(null)",
+    viaProxy: Boolean(proxyUrl),
+  });
+
   const browser = await launchChromiumBrowser();
   try {
     const context = await browser.newContext({
-      userAgent: LINK_VALIDATOR_USER_AGENT,
+      userAgent: REALISTIC_BROWSER_USER_AGENT,
       ...(playwrightProxy ? { proxy: playwrightProxy } : {}),
     });
     const page = await context.newPage();

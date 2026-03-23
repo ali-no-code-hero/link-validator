@@ -21,7 +21,7 @@ If Vercel logs show **“The input directory …/node_modules/@sparticuz/chromiu
 
 ### Residential / rotating proxy (optional)
 
-Set **`LINK_VALIDATOR_PROXY_URL`** to a full proxy URL with embedded credentials (same pattern as `request({ proxy: 'http://user:pass@host:port' })`). Example: `http://USERNAME:PASSWORD@proxy.smartproxy.net:3120`. Playwright uses this for **all browser traffic** when opening job links. The **outbound IP** stored in `click_logs` is resolved through the **same** proxy via [`undici`](https://undici.nodejs.org/) `ProxyAgent` (default check: ipify JSON). Override the check URL with **`LINK_VALIDATOR_OUTBOUND_IP_URL`** if you use a provider like `https://api.ip.cc`. Never commit real credentials; set the variable in `.env.local` or Vercel **Environment Variables**.
+Set **`LINK_VALIDATOR_PROXY_URL`** to a full proxy URL with embedded credentials (same pattern as `request({ proxy: 'http://user:pass@host:port' })`). Example: `http://USERNAME:PASSWORD@proxy.smartproxy.net:3120`. Playwright uses a **realistic desktop Chrome** user agent for navigations. When a proxy is set, each click also runs a **direct vs proxy egress IP** comparison (two lookups) and stores the result in `extra_tracking_data.proxyEgressCheck` so you can confirm the proxy IP differs from the server’s direct egress. The **outbound IP** on the row uses the proxy path via [`undici`](https://undici.nodejs.org/) `ProxyAgent` (default check: ipify JSON). Override the check URL with **`LINK_VALIDATOR_OUTBOUND_IP_URL`** if you use a provider like `https://api.ip.cc`. Never commit real credentials; set the variable in `.env.local` or Vercel **Environment Variables**.
 
 ## Getting Started
 

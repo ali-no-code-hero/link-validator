@@ -68,3 +68,29 @@ export async function fetchOutboundIp(proxyUrl: string | null): Promise<string |
     return null;
   }
 }
+
+export type ProxyEgressCheck = {
+  directIp: string | null;
+  proxyIp: string | null;
+  /** Both IPs resolved and different — traffic through proxy is consistent with distinct egress. */
+  proxyIpDistinctFromDirect: boolean;
+  /** Both resolved and equal — possible misconfiguration or same egress (flag for review). */
+  proxySameAsDirectSuspected: boolean;
+};
+
+/**
+ * One direct + one proxied IP check per trace when a proxy URL is configured.
+ */
+export async function compareDirectAndProxyEgress(proxyUrl: string): Promise<ProxyEgressCheck> {
+  const [directIp, proxyIp] = await Promise.all([
+    fetchOutboundIp(null),
+    fetchOutboundIp(proxyUrl),
+  ]);
+  const both = Boolean(directIp && proxyIp);
+  return {
+    directIp,
+    proxyIp,
+    proxyIpDistinctFromDirect: both && directIp !== proxyIp,
+    proxySameAsDirectSuspected: both && directIp === proxyIp,
+  };
+}
