@@ -276,7 +276,9 @@ export default function Home() {
       return;
     }
 
-    const limit = pLimit(4);
+    // One click at a time: concurrent Playwright + Sparticuz on Vercel causes ETXTBSY and
+    // net::ERR_INSUFFICIENT_RESOURCES from overlapping /tmp chromium and memory pressure.
+    const limit = pLimit(1);
 
     try {
       await Promise.all(

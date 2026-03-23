@@ -19,9 +19,15 @@ Set `LINK_VALIDATOR_DEBUG=1` in the environment for full URLs and error stacks i
 
 If Vercel logs show **“The input directory …/node_modules/@sparticuz/chromium/bin does not exist”**, the serverless bundle was missing the brotli binaries. This project sets `outputFileTracingIncludes` in [`next.config.ts`](./next.config.ts) so `next build` copies `node_modules/@sparticuz/chromium/bin` into the function trace. Redeploy after pulling that change.
 
+### Vercel reliability (Playwright + Sparticuz)
+
+The dashboard runs **one job click at a time** (sequential API calls). Parallel runs were causing **`spawn ETXTBSY`** (racing Chromium extraction under `/tmp`) and **`net::ERR_INSUFFICIENT_RESOURCES`**. The server **retries** Chromium launch a few times with backoff, and **retries** `page.goto` once after a short delay if Chrome reports insufficient resources.
+
 ### Residential / rotating proxy (optional)
 
 Set **`LINK_VALIDATOR_PROXY_URL`** to a full proxy URL with embedded credentials (same pattern as `request({ proxy: 'http://user:pass@host:port' })`). Example: `http://USERNAME:PASSWORD@proxy.smartproxy.net:3120`. Playwright uses a **realistic desktop Chrome** user agent for navigations. When a proxy is set, each click also runs a **direct vs proxy egress IP** comparison (two lookups) and stores the result in `extra_tracking_data.proxyEgressCheck` so you can confirm the proxy IP differs from the server’s direct egress. The **outbound IP** on the row uses the proxy path via [`undici`](https://undici.nodejs.org/) `ProxyAgent` (default check: ipify JSON). Override the check URL with **`LINK_VALIDATOR_OUTBOUND_IP_URL`** if you use a provider like `https://api.ip.cc`. Never commit real credentials; set the variable in `.env.local` or Vercel **Environment Variables**.
+
+**Anti-bot hardening (technical, not a guarantee):** Chromium launches with **`playwright-extra`** and the **stealth** plugin by default (`LINK_VALIDATOR_STEALTH=0` disables it). Align **`LINK_VALIDATOR_BROWSER_LOCALE`**, **`LINK_VALIDATOR_BROWSER_TIMEZONE`**, and optional **`LINK_VALIDATOR_VIEWPORT_*`** with your proxy’s egress region. For residential proxies, configure **sticky sessions** per your provider (often a session id in the username or URL) so the same IP is used across the redirect chain; see [`.env.local.example`](./.env.local.example). Partner-side allowlists may still be required for heavily protected ATS URLs.
 
 ## Getting Started
 

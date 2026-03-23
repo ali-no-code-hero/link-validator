@@ -1,4 +1,4 @@
-import type { Frame, Request, Response } from "playwright-core";
+import type { Frame, Page, Request, Response } from "playwright-core";
 import type { RedirectChainEntry } from "@/lib/types/database";
 import { compareDirectAndProxyEgress, fetchOutboundIp } from "@/lib/outbound-ip";
 import { launchChromiumBrowser } from "@/lib/playwright/launch-browser";
@@ -8,10 +8,50 @@ import {
   proxyEndpointForLog,
 } from "@/lib/proxy";
 import { logError, logInfo, logWarn, truncateUrl } from "@/lib/server-log";
+import {
+  getTraceBrowserContextOptions,
+  getTraceBrowserProfileForExtras,
+} from "@/lib/browser-context-options";
 import { REALISTIC_BROWSER_USER_AGENT } from "@/lib/user-agent";
 
 const GOTO_TIMEOUT_MS = 50_000;
+const GOTO_INSUFFICIENT_RESOURCES_RETRIES = 2;
+const GOTO_RETRY_BACKOFF_MS = 2500;
 const MAX_RESPONSE_HEADER_KEYS = 24;
+
+async function gotoWithInsufficientResourcesRetry(
+  page: Page,
+  url: string,
+  extra: Record<string, unknown>,
+): Promise<Response | null> {
+  for (let i = 0; i < GOTO_INSUFFICIENT_RESOURCES_RETRIES; i++) {
+    if (i > 0) {
+      extra.gotoRetryAfterInsufficientResources = true;
+      extra.gotoRetryAttempt = i + 1;
+      logWarn("trace.goto", "retry_after_insufficient_resources", {
+        attempt: i + 1,
+        backoffMs: GOTO_RETRY_BACKOFF_MS,
+      });
+      await new Promise<void>((resolve) => {
+        setTimeout(resolve, GOTO_RETRY_BACKOFF_MS);
+      });
+    }
+    try {
+      return await page.goto(url, {
+        waitUntil: "domcontentloaded",
+        timeout: GOTO_TIMEOUT_MS,
+      });
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e);
+      const isInsufficient = /ERR_INSUFFICIENT_RESOURCES/i.test(msg);
+      if (isInsufficient && i < GOTO_INSUFFICIENT_RESOURCES_RETRIES - 1) {
+        continue;
+      }
+      throw e;
+    }
+  }
+  throw new Error("gotoWithInsufficientResourcesRetry: exhausted attempts");
+}
 
 /** Drop consecutive identical steps only (same url, status, type) — keeps real redirect repeats. */
 function dedupeConsecutiveIdentical(chain: RedirectChainEntry[]): RedirectChainEntry[] {
@@ -109,6 +149,7 @@ export async function traceJobUrl(initialUrl: string, deviceId: string): Promise
     clientInstrumentation: "CollabWork Link Validator",
     deviceId,
     proxyUsed: Boolean(playwrightProxy),
+    ...getTraceBrowserProfileForExtras(),
     ...(proxyUrl ? { proxyServer: proxyEndpointForLog(proxyUrl) } : {}),
   };
 
@@ -145,7 +186,7 @@ export async function traceJobUrl(initialUrl: string, deviceId: string): Promise
   const browser = await launchChromiumBrowser();
   try {
     const context = await browser.newContext({
-      userAgent: REALISTIC_BROWSER_USER_AGENT,
+      ...getTraceBrowserContextOptions(REALISTIC_BROWSER_USER_AGENT),
       ...(playwrightProxy ? { proxy: playwrightProxy } : {}),
     });
     const page = await context.newPage();
@@ -201,10 +242,11 @@ export async function traceJobUrl(initialUrl: string, deviceId: string): Promise
         timeoutMs: GOTO_TIMEOUT_MS,
       });
 
-      const response: Response | null = await page.goto(initialUrl, {
-        waitUntil: "domcontentloaded",
-        timeout: GOTO_TIMEOUT_MS,
-      });
+      const response: Response | null = await gotoWithInsufficientResourcesRetry(
+        page,
+        initialUrl,
+        extra,
+      );
 
       final_destination_url = page.url();
       status_code = response?.status() ?? null;
