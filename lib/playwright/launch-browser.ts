@@ -4,6 +4,7 @@ import { addExtra } from "playwright-extra";
 import { chromium as chromiumCore } from "playwright-core";
 import type { Browser } from "playwright-core";
 import StealthPlugin from "puppeteer-extra-plugin-stealth";
+import { registerStealthEvasionResolutions } from "@/lib/playwright/register-stealth-evasions";
 import { logError, logInfo, logWarn, runtimeHints } from "@/lib/server-log";
 
 /**
@@ -14,6 +15,7 @@ const chromium = addExtra(chromiumCore);
 
 /** Set LINK_VALIDATOR_STEALTH=0 to disable evasions (debug only). */
 if (process.env.LINK_VALIDATOR_STEALTH !== "0") {
+  registerStealthEvasionResolutions(chromium.plugins);
   chromium.use(StealthPlugin());
 }
 

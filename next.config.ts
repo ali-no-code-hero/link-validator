@@ -31,6 +31,9 @@ const nextConfig: NextConfig = {
       "./node_modules/kind-of/**/*",
       "./node_modules/for-own/**/*",
       "./node_modules/arr-union/**/*",
+      // Stealth loads each evasion via require(); trace must ship the full tree.
+      "./node_modules/puppeteer-extra-plugin-stealth/evasions/**/*",
+      "./node_modules/puppeteer-extra-plugin-user-preferences/**/*",
     ],
   },
 };
