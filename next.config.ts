@@ -17,7 +17,20 @@ const nextConfig: NextConfig = {
   outputFileTracingIncludes: {
     // Match App Router API routes (picomatch). If clicks still miss binaries on deploy,
     // temporarily use "/*" instead of "/api/**" (adds ~60MB to traces).
-    "/api/**": ["./node_modules/@sparticuz/chromium/bin/**/*"],
+    "/api/**": [
+      "./node_modules/@sparticuz/chromium/bin/**/*",
+      // puppeteer-extra-plugin → merge-deep → clone-deep expects these at runtime; tracing
+      // externalized stealth deps can omit nested node_modules on Vercel.
+      "./node_modules/is-plain-object/**/*",
+      "./node_modules/clone-deep/**/*",
+      "./node_modules/merge-deep/**/*",
+      "./node_modules/puppeteer-extra-plugin/**/*",
+      "./node_modules/lazy-cache/**/*",
+      "./node_modules/shallow-clone/**/*",
+      "./node_modules/kind-of/**/*",
+      "./node_modules/for-own/**/*",
+      "./node_modules/arr-union/**/*",
+    ],
   },
 };
 
