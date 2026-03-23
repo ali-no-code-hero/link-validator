@@ -22,6 +22,7 @@ const nextConfig: NextConfig = {
       // puppeteer-extra-plugin → merge-deep → clone-deep expects these at runtime; tracing
       // externalized stealth deps can omit nested node_modules on Vercel.
       "./node_modules/is-plain-object/**/*",
+      "./node_modules/isobject/**/*",
       "./node_modules/clone-deep/**/*",
       "./node_modules/merge-deep/**/*",
       "./node_modules/puppeteer-extra-plugin/**/*",
