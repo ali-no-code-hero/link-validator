@@ -1,9 +1,16 @@
 import { existsSync } from "fs";
 import path from "path";
-import { chromium } from "playwright-extra";
+import { addExtra } from "playwright-extra";
+import { chromium as chromiumCore } from "playwright-core";
 import type { Browser } from "playwright-core";
 import StealthPlugin from "puppeteer-extra-plugin-stealth";
 import { logError, logInfo, logWarn, runtimeHints } from "@/lib/server-log";
+
+/**
+ * Default `playwright-extra` tries to require("playwright-core") at runtime; on Vercel
+ * that resolution fails inside the serverless bundle. Patch the explicit core launcher.
+ */
+const chromium = addExtra(chromiumCore);
 
 /** Set LINK_VALIDATOR_STEALTH=0 to disable evasions (debug only). */
 if (process.env.LINK_VALIDATOR_STEALTH !== "0") {
