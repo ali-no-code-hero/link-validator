@@ -17,6 +17,8 @@ Server logs emit one JSON object per line with `"component":"link-validator:..."
 
 Set `LINK_VALIDATOR_DEBUG=1` in the environment for full URLs and error stacks in logs.
 
+If Vercel logs show **“The input directory …/node_modules/@sparticuz/chromium/bin does not exist”**, the serverless bundle was missing the brotli binaries. This project sets `outputFileTracingIncludes` in [`next.config.ts`](./next.config.ts) so `next build` copies `node_modules/@sparticuz/chromium/bin` into the function trace. Redeploy after pulling that change.
+
 ## Getting Started
 
 First, run the development server:

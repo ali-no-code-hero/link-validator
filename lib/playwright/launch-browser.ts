@@ -1,5 +1,11 @@
+import { existsSync } from "fs";
+import path from "path";
 import type { Browser } from "playwright-core";
-import { logError, logInfo, runtimeHints } from "@/lib/server-log";
+import { logError, logInfo, logWarn, runtimeHints } from "@/lib/server-log";
+
+function sparticuzBinDir(): string {
+  return path.join(process.cwd(), "node_modules", "@sparticuz", "chromium", "bin");
+}
 
 export async function launchChromiumBrowser(): Promise<Browser> {
   const { chromium } = await import("playwright-core");
@@ -9,7 +15,17 @@ export async function launchChromiumBrowser(): Promise<Browser> {
     logInfo("playwright.launch", "using_sparticuz_chromium", hints);
     try {
       const chromiumPack = (await import("@sparticuz/chromium")).default;
-      const executablePath = await chromiumPack.executablePath();
+      const binDir = sparticuzBinDir();
+      if (!existsSync(binDir)) {
+        logWarn("playwright.launch", "chromium_bin_missing_at_cwd", {
+          ...hints,
+          cwd: process.cwd(),
+          expectedBin: binDir,
+        });
+      }
+      const executablePath = await chromiumPack.executablePath(
+        existsSync(binDir) ? binDir : undefined,
+      );
       logInfo("playwright.launch", "chromium_executable", {
         ...hints,
         executablePathSuffix: executablePath.slice(-80),
