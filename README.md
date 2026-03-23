@@ -7,6 +7,16 @@ This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-
 3. For local click tracing, install Chromium for Playwright once: `npx playwright install chromium`.
 4. Deploy to Vercel with the same environment variables. Set **Function max duration** (e.g. 60s on Pro) to match the click route; the dashboard processes **one job per serverless invocation** to stay within limits.
 
+### Debugging failed clicks
+
+Server logs emit one JSON object per line with `"component":"link-validator:..."`. On **Vercel**: Project → **Deployments** → a deployment → **Functions** → select `/api/click/[jobId]` → **Logs**, or use the runtime logs stream. Locally they appear in the terminal running `npm run dev`.
+
+- `link-validator:api.click` — job loaded, trace outcome, `failureReason` when marked failed.
+- `link-validator:trace` / `trace.goto` — before/after navigation, `response_null` when Playwright returns no `Response` (common cause of `status_code` null and empty HTTP chain).
+- `link-validator:playwright.launch` — Chromium launch (Sparticuz on Vercel vs local Playwright).
+
+Set `LINK_VALIDATOR_DEBUG=1` in the environment for full URLs and error stacks in logs.
+
 ## Getting Started
 
 First, run the development server:

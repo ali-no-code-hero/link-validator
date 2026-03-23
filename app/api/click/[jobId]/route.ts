@@ -1,6 +1,7 @@
 import { randomUUID } from "crypto";
 import { NextResponse } from "next/server";
 import { traceJobUrl } from "@/lib/playwright/trace-job-url";
+import { logError, logInfo, logWarn, truncateUrl } from "@/lib/server-log";
 import { createServiceRoleClient } from "@/lib/supabase/server";
 
 export const maxDuration = 60;
@@ -18,11 +19,29 @@ function isTraceSuccess(
   return statusCode >= 200 && statusCode < 400;
 }
 
+function explainFailure(
+  statusCode: number | null,
+  extra: Record<string, unknown>,
+): string {
+  if (extra.error) {
+    return `navigation_error:${String(extra.error)}`;
+  }
+  if (statusCode === null) {
+    return "status_code_null (no Response from page.goto — see trace.goto logs)";
+  }
+  if (statusCode >= 400) {
+    return `http_${statusCode}`;
+  }
+  return "unknown";
+}
+
 export async function POST(
   _request: Request,
   context: { params: Promise<{ jobId: string }> },
 ) {
   const { jobId } = await context.params;
+  logInfo("api.click", "request", { jobId });
+
   const supabase = createServiceRoleClient();
 
   const { data: job, error: jobError } = await supabase
@@ -32,11 +51,19 @@ export async function POST(
     .maybeSingle();
 
   if (jobError) {
+    logError("api.click", "job_query_failed", jobError, { jobId });
     return NextResponse.json({ error: jobError.message }, { status: 500 });
   }
   if (!job) {
+    logWarn("api.click", "job_not_found", { jobId });
     return NextResponse.json({ error: "Job not found" }, { status: 404 });
   }
+
+  logInfo("api.click", "job_loaded", {
+    jobId: job.id,
+    job_eid: job.job_eid,
+    url: truncateUrl(job.url),
+  });
 
   const deviceId = randomUUID();
 
@@ -44,8 +71,13 @@ export async function POST(
   try {
     trace = await traceJobUrl(job.url, deviceId);
   } catch (e) {
+    logError("api.click", "trace_threw", e, {
+      jobId: job.id,
+      job_eid: job.job_eid,
+      url: truncateUrl(job.url),
+    });
     const message = e instanceof Error ? e.message : String(e);
-    const { error: logError } = await supabase.from("click_logs").insert({
+    const { error: logErrorDb } = await supabase.from("click_logs").insert({
       job_eid: job.job_eid,
       job_fetched_id: job.id,
       batch_id: job.batch_id,
@@ -55,10 +87,15 @@ export async function POST(
       ip_address_used: null,
       user_agent_device_id: deviceId,
       status_code: null,
-      extra_tracking_data: { error: message, failureStage: "playwright_launch_or_trace" },
+      extra_tracking_data: {
+        error: message,
+        failureStage: "playwright_launch_or_trace",
+        logHint: "Check Vercel function logs for link-validator:playwright.launch or trace",
+      },
     });
-    if (logError) {
-      return NextResponse.json({ error: logError.message }, { status: 500 });
+    if (logErrorDb) {
+      logError("api.click", "click_logs_insert_failed", logErrorDb, { jobId: job.id });
+      return NextResponse.json({ error: logErrorDb.message }, { status: 500 });
     }
     await supabase
       .from("jobs_fetched")
@@ -73,6 +110,25 @@ export async function POST(
   }
 
   const success = isTraceSuccess(trace.status_code, trace.extra_tracking_data);
+  const failureReason = explainFailure(trace.status_code, trace.extra_tracking_data);
+
+  logInfo("api.click", "trace_result", {
+    jobId: job.id,
+    job_eid: job.job_eid,
+    success,
+    failureReason,
+    status_code: trace.status_code,
+    chainLength: trace.redirect_chain.length,
+    hasExtraError: Boolean(trace.extra_tracking_data.error),
+  });
+
+  if (!success) {
+    logWarn("api.click", "marking_failed", {
+      jobId: job.id,
+      failureReason,
+      status_code: trace.status_code,
+    });
+  }
 
   const { error: insertError } = await supabase.from("click_logs").insert({
     job_eid: job.job_eid,
@@ -84,10 +140,14 @@ export async function POST(
     ip_address_used: trace.ip_address_used,
     user_agent_device_id: trace.user_agent_device_id,
     status_code: trace.status_code,
-    extra_tracking_data: trace.extra_tracking_data,
+    extra_tracking_data: {
+      ...trace.extra_tracking_data,
+      ...(success ? {} : { failureReason }),
+    },
   });
 
   if (insertError) {
+    logError("api.click", "click_logs_insert_failed", insertError, { jobId: job.id });
     return NextResponse.json({ error: insertError.message }, { status: 500 });
   }
 
@@ -97,8 +157,11 @@ export async function POST(
     .eq("id", job.id);
 
   if (updateError) {
+    logError("api.click", "jobs_fetched_update_failed", updateError, { jobId: job.id });
     return NextResponse.json({ error: updateError.message }, { status: 500 });
   }
+
+  logInfo("api.click", "done", { jobId: job.id, success });
 
   return NextResponse.json({
     ok: success,
@@ -109,5 +172,6 @@ export async function POST(
     status_code: trace.status_code,
     ip_address_used: trace.ip_address_used,
     user_agent_device_id: trace.user_agent_device_id,
+    failureReason: success ? undefined : failureReason,
   });
 }

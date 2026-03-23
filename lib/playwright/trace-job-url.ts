@@ -1,6 +1,7 @@
 import type { Frame, Request, Response } from "playwright-core";
 import type { RedirectChainEntry } from "@/lib/types/database";
 import { launchChromiumBrowser } from "@/lib/playwright/launch-browser";
+import { logError, logInfo, logWarn, truncateUrl } from "@/lib/server-log";
 
 export const LINK_VALIDATOR_USER_AGENT = "Link Validator - CollabWork";
 
@@ -32,11 +33,13 @@ async function getOutboundIp(): Promise<string | null> {
   try {
     const res = await fetch("https://api.ipify.org?format=json", { cache: "no-store" });
     if (!res.ok) {
+      logWarn("trace.ipify", "non_ok_response", { status: res.status });
       return null;
     }
     const j = (await res.json()) as { ip?: string };
     return typeof j.ip === "string" ? j.ip : null;
-  } catch {
+  } catch (e) {
+    logError("trace.ipify", "fetch_failed", e, {});
     return null;
   }
 }
@@ -67,7 +70,14 @@ export type TraceJobResult = {
 };
 
 export async function traceJobUrl(initialUrl: string, deviceId: string): Promise<TraceJobResult> {
+  logInfo("trace", "start", {
+    initialUrl: truncateUrl(initialUrl),
+    deviceId,
+  });
+
   const ip_address_used = await getOutboundIp();
+  logInfo("trace", "outbound_ip", { ip: ip_address_used ?? "(null)" });
+
   const extra: Record<string, unknown> = {
     userAgent: LINK_VALIDATOR_USER_AGENT,
     deviceId,
@@ -93,12 +103,35 @@ export async function traceJobUrl(initialUrl: string, deviceId: string): Promise
     const redirect_chain: RedirectChainEntry[] = [];
 
     try {
+      logInfo("trace.goto", "before_goto", {
+        initialUrl: truncateUrl(initialUrl),
+        timeoutMs: GOTO_TIMEOUT_MS,
+      });
+
       const response: Response | null = await page.goto(initialUrl, {
         waitUntil: "domcontentloaded",
         timeout: GOTO_TIMEOUT_MS,
       });
+
       final_destination_url = page.url();
       status_code = response?.status() ?? null;
+
+      if (!response) {
+        logWarn("trace.goto", "response_null", {
+          pageUrl: truncateUrl(page.url()),
+          note:
+            "Playwright returned no Response (e.g. download starting, non-document navigation, or certain redirects).",
+        });
+      } else {
+        const req = response.request();
+        const httpUrls = walkRedirectedRequests(req);
+        logInfo("trace.goto", "after_goto", {
+          finalUrl: truncateUrl(final_destination_url ?? ""),
+          status: status_code,
+          httpRedirectSteps: httpUrls.length,
+          frameNavCount: frameNavUrls.length,
+        });
+      }
 
       if (response) {
         const req = response.request();
@@ -139,6 +172,10 @@ export async function traceJobUrl(initialUrl: string, deviceId: string): Promise
       }
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
+      logError("trace.goto", "goto_threw", err, {
+        initialUrl: truncateUrl(initialUrl),
+        pageUrlAfter: truncateUrl(page.url()),
+      });
       extra.error = message;
       extra.failureStage = "goto_or_navigation";
       final_destination_url = page.url() !== "about:blank" ? page.url() : null;
@@ -150,7 +187,7 @@ export async function traceJobUrl(initialUrl: string, deviceId: string): Promise
       }
     }
 
-    return {
+    const result = {
       initial_url: initialUrl,
       final_destination_url,
       redirect_chain: dedupeChain(redirect_chain),
@@ -159,6 +196,15 @@ export async function traceJobUrl(initialUrl: string, deviceId: string): Promise
       status_code,
       extra_tracking_data: extra,
     };
+
+    logInfo("trace", "complete", {
+      chainLength: result.redirect_chain.length,
+      finalUrl: truncateUrl(result.final_destination_url ?? ""),
+      status: result.status_code,
+      hasExtraError: Boolean(result.extra_tracking_data.error),
+    });
+
+    return result;
   } finally {
     await browser.close();
   }
