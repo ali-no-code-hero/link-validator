@@ -1,5 +1,12 @@
 This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
 
+## Link Validator (Supabase + Vercel)
+
+1. Copy [`.env.local.example`](./.env.local.example) to `.env.local` and fill in Collabwork and Supabase keys.
+2. In the Supabase SQL editor, run [`supabase/migrations/001_init.sql`](./supabase/migrations/001_init.sql) to create `jobs_fetched` and `click_logs`.
+3. For local click tracing, install Chromium for Playwright once: `npx playwright install chromium`.
+4. Deploy to Vercel with the same environment variables. Set **Function max duration** (e.g. 60s on Pro) to match the click route; the dashboard processes **one job per serverless invocation** to stay within limits.
+
 ## Getting Started
 
 First, run the development server:
