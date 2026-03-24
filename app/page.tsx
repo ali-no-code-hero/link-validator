@@ -1,5 +1,6 @@
 "use client";
 
+import Link from "next/link";
 import pLimit from "p-limit";
 import { Fragment, useCallback, useEffect, useRef, useState, type ReactNode } from "react";
 
@@ -308,12 +309,22 @@ export default function Home() {
     <div className="min-h-full bg-zinc-950 text-zinc-100">
       <div className="mx-auto max-w-6xl px-4 py-10 sm:px-6 lg:px-8">
         <header className="mb-10 border-b border-zinc-800 pb-8">
-          <p className="text-sm font-medium uppercase tracking-widest text-emerald-400/90">
-            CollabWork · Partner verification
-          </p>
-          <h1 className="mt-2 text-3xl font-semibold tracking-tight text-white sm:text-4xl">
-            Link Validator
-          </h1>
+          <div className="flex flex-wrap items-start justify-between gap-4">
+            <div>
+              <p className="text-sm font-medium uppercase tracking-widest text-emerald-400/90">
+                CollabWork · Partner verification
+              </p>
+              <h1 className="mt-2 text-3xl font-semibold tracking-tight text-white sm:text-4xl">
+                Link Validator
+              </h1>
+            </div>
+            <Link
+              href="/analytics"
+              className="shrink-0 rounded-lg border border-zinc-700 bg-zinc-900 px-4 py-2 text-sm font-medium text-zinc-200 transition hover:border-emerald-800/60 hover:text-emerald-300/90"
+            >
+              Analytics
+            </Link>
+          </div>
           <p className="mt-3 max-w-2xl text-sm leading-relaxed text-zinc-400">
             Fetch jobs from the Collabwork API, trace redirects in a real desktop Chrome user agent, optionally
             through a residential proxy with per-click egress checks, and store results in Supabase.

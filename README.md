@@ -4,8 +4,13 @@ This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-
 
 1. Copy [`.env.local.example`](./.env.local.example) to `.env.local` and fill in Collabwork and Supabase keys.
 2. In the Supabase SQL editor, run [`supabase/migrations/001_init.sql`](./supabase/migrations/001_init.sql) to create `jobs_fetched` and `click_logs`.
-3. For local click tracing, install Chromium for Playwright once: `npx playwright install chromium`.
-4. Deploy to Vercel with the same environment variables. The click route sets **`maxDuration` 120s** so slow proxy redirect chains and a navigation retry can finish; ensure your Vercel plan allows it (or lower **`LINK_VALIDATOR_GOTO_TIMEOUT_MS`** / **`LINK_VALIDATOR_GOTO_MAX_ATTEMPTS`** and reduce `maxDuration` in [`app/api/click/[jobId]/route.ts`](./app/api/click/[jobId]/route.ts)). The dashboard processes **one job per serverless invocation** to stay within limits.
+3. For the **Analytics** page ([`/analytics`](./app/analytics/page.tsx)), run [`supabase/migrations/002_analytics_timeseries.sql`](./supabase/migrations/002_analytics_timeseries.sql) so the RPC `link_validator_analytics_timeseries` exists (same SQL editor).
+4. For local click tracing, install Chromium for Playwright once: `npx playwright install chromium`.
+5. Deploy to Vercel with the same environment variables. The click route sets **`maxDuration` 120s** so slow proxy redirect chains and a navigation retry can finish; ensure your Vercel plan allows it (or lower **`LINK_VALIDATOR_GOTO_TIMEOUT_MS`** / **`LINK_VALIDATOR_GOTO_MAX_ATTEMPTS`** and reduce `maxDuration` in [`app/api/click/[jobId]/route.ts`](./app/api/click/[jobId]/route.ts)). The dashboard processes **one job per serverless invocation** to stay within limits.
+
+### Analytics
+
+Open **`/analytics`** (or use the **Analytics** button on the home dashboard). Charts use **UTC calendar days** for the selected range (7 / 30 / 90 days). Data comes from [`/api/analytics/timeseries`](./app/api/analytics/timeseries/route.ts) via Supabase RPC `link_validator_analytics_timeseries`.
 
 ### Debugging failed clicks
 
