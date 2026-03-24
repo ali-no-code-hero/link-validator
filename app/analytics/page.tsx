@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState, type ReactNode } from "react";
 
 type ClickDay = {
   date: string;
@@ -12,6 +12,12 @@ type ClickDay = {
   server5xx: number;
   noStatus: number;
   navErrors: number;
+  /** app.collabwork.com URL containing job=closed (closed job landing). */
+  collabworkJobClosed: number;
+  /** Any other non-empty final_destination_url. */
+  finalUrlOther: number;
+  /** Null or empty final_destination_url. */
+  finalUrlNull: number;
 };
 
 type BatchDay = {
@@ -28,6 +34,9 @@ type AnalyticsPayload = {
     clicks: number;
     jobsHarvested: number;
     distinctBatches: number;
+    collabworkJobClosed: number;
+    finalUrlOther: number;
+    finalUrlNull: number;
   };
 };
 
@@ -59,11 +68,24 @@ function mergeSeries(days: number, payload: AnalyticsPayload): MergedRow[] {
       server5xx: c?.server5xx ?? 0,
       noStatus: c?.noStatus ?? 0,
       navErrors: c?.navErrors ?? 0,
+      collabworkJobClosed: c?.collabworkJobClosed ?? 0,
+      finalUrlOther: c?.finalUrlOther ?? 0,
+      finalUrlNull: c?.finalUrlNull ?? 0,
       batches: b?.batches ?? 0,
       jobsHarvested: b?.jobsHarvested ?? 0,
     };
   });
 }
+
+const DEST_KEYS = [
+  {
+    key: "collabworkJobClosed" as const,
+    label: "CollabWORK · job=closed",
+    className: "bg-rose-500/85",
+  },
+  { key: "finalUrlOther" as const, label: "Other final URL", className: "bg-cyan-600/80" },
+  { key: "finalUrlNull" as const, label: "No final URL", className: "bg-zinc-600/80" },
+];
 
 const STACK_KEYS = [
   { key: "ok2xx" as const, label: "2xx", className: "bg-emerald-500/80" },
@@ -77,6 +99,278 @@ const STACK_KEYS = [
 function formatShortDate(isoDate: string): string {
   const [, m, d] = isoDate.split("-");
   return `${m}/${d}`;
+}
+
+/** e.g. Mar 24 — easier to scan than 03/24 alone */
+function formatAxisDate(isoDate: string): string {
+  const [y, mo, day] = isoDate.split("-").map(Number);
+  if (!y || !mo || !day) {
+    return formatShortDate(isoDate);
+  }
+  return new Date(Date.UTC(y, mo - 1, day)).toLocaleDateString("en-US", {
+    month: "short",
+    day: "numeric",
+    timeZone: "UTC",
+  });
+}
+
+/** Avoid crowding on 30/90 day views */
+function showXAxisLabel(index: number, total: number): boolean {
+  if (total <= 14) {
+    return true;
+  }
+  if (total <= 31) {
+    return index % 2 === 0 || index === total - 1;
+  }
+  const step = Math.ceil(total / 12);
+  return index % step === 0 || index === total - 1;
+}
+
+const CHART_PLOT_H = 200;
+const AXIS_H = 52;
+
+/** Shared time-series column chart: Y ticks, grid, scroll on dense ranges, values on bars. */
+function SimpleBarChart({
+  rows,
+  maxValue,
+  getValue,
+  barClassName,
+  unit,
+  formatTitle,
+}: {
+  rows: MergedRow[];
+  maxValue: number;
+  getValue: (r: MergedRow) => number;
+  barClassName: string;
+  unit: string;
+  /** Override native tooltip text per column */
+  formatTitle?: (r: MergedRow, value: number) => string;
+}) {
+  const max = Math.max(1, maxValue);
+  const mid = Math.round(max / 2);
+  return (
+    <div className="flex flex-col gap-2 sm:flex-row sm:items-stretch sm:gap-3">
+      <div
+        className="flex h-[calc(var(--plot)+var(--axis))] w-full shrink-0 flex-row justify-between gap-2 sm:h-auto sm:w-14 sm:flex-col sm:justify-between sm:py-1 sm:pr-1 sm:pb-[calc(var(--axis)+4px)]"
+        style={
+          {
+            "--plot": `${CHART_PLOT_H}px`,
+            "--axis": `${AXIS_H}px`,
+          } as React.CSSProperties
+        }
+      >
+        <span className="text-right text-[11px] font-semibold tabular-nums text-zinc-300 sm:pt-1">{max}</span>
+        <span className="hidden text-right text-[11px] tabular-nums text-zinc-500 sm:block">{mid}</span>
+        <span className="text-right text-[11px] tabular-nums text-zinc-500 sm:pb-[calc(var(--axis)+2px)]">
+          0
+        </span>
+      </div>
+      <div className="min-w-0 flex-1 overflow-x-auto rounded-xl border border-zinc-800 bg-zinc-950/70 shadow-inner shadow-black/20">
+        <div className="inline-block min-w-full px-2 sm:px-3">
+          <div
+            className="relative border-b border-zinc-700/90"
+            style={{ height: CHART_PLOT_H }}
+          >
+            <div
+              className="pointer-events-none absolute inset-0 flex flex-col justify-between pb-0 pt-2"
+              aria-hidden
+            >
+              {[0, 1, 2, 3].map((i) => (
+                <div key={i} className="border-t border-dashed border-zinc-800/90" />
+              ))}
+            </div>
+            <div className="relative flex h-full items-end justify-stretch gap-1.5 pb-0 pt-3">
+              {rows.map((r) => {
+                const v = getValue(r);
+                const pct = (v / max) * 100;
+                const tip = formatTitle ? formatTitle(r, v) : `${r.date} — ${v} ${unit}`;
+                return (
+                  <div
+                    key={r.date}
+                    className="group flex min-w-[12px] max-w-[3rem] flex-1 flex-col items-center justify-end"
+                    title={tip}
+                  >
+                    {v > 0 ? (
+                      <span className="mb-1 text-center text-[10px] font-semibold tabular-nums text-zinc-300 sm:text-[11px]">
+                        {v}
+                      </span>
+                    ) : (
+                      <span className="mb-1 h-[14px] shrink-0" />
+                    )}
+                    <div
+                      className={`w-full max-w-[2.75rem] rounded-t-sm ${barClassName} transition group-hover:brightness-110`}
+                      style={{
+                        height: `${pct}%`,
+                        minHeight: v > 0 ? 4 : 0,
+                      }}
+                    />
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+          <div
+            className="flex justify-stretch gap-1.5 border-t border-zinc-800/80 pt-2 pb-2"
+            style={{ minHeight: AXIS_H }}
+          >
+            {rows.map((r, i) => (
+              <div
+                key={`x-${r.date}`}
+                className="flex min-w-[12px] max-w-[3rem] flex-1 flex-col items-center justify-start"
+              >
+                {showXAxisLabel(i, rows.length) ? (
+                  <span className="block max-h-[48px] w-[3.25rem] -rotate-45 text-center text-[10px] leading-tight text-zinc-500 sm:text-[11px]">
+                    {formatAxisDate(r.date)}
+                  </span>
+                ) : (
+                  <span className="block h-3 w-px" aria-hidden />
+                )}
+              </div>
+            ))}
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+type StackKey = { key: keyof MergedRow; label: string; className: string };
+
+function StackedBarChart({
+  rows,
+  maxStack,
+  keys,
+}: {
+  rows: MergedRow[];
+  maxStack: number;
+  keys: StackKey[];
+}) {
+  const max = Math.max(1, maxStack);
+  const mid = Math.round(max / 2);
+  return (
+    <div className="flex flex-col gap-2 sm:flex-row sm:items-stretch sm:gap-3">
+      <div
+        className="flex h-[calc(var(--plot)+var(--axis))] w-full shrink-0 flex-row justify-between gap-2 sm:h-auto sm:w-14 sm:flex-col sm:justify-between sm:py-1 sm:pr-1 sm:pb-[calc(var(--axis)+4px)]"
+        style={
+          {
+            "--plot": `${CHART_PLOT_H}px`,
+            "--axis": `${AXIS_H}px`,
+          } as React.CSSProperties
+        }
+      >
+        <span className="text-right text-[11px] font-semibold tabular-nums text-zinc-300 sm:pt-1">{max}</span>
+        <span className="hidden text-right text-[11px] tabular-nums text-zinc-500 sm:block">{mid}</span>
+        <span className="text-right text-[11px] tabular-nums text-zinc-500 sm:pb-[calc(var(--axis)+2px)]">
+          0
+        </span>
+      </div>
+      <div className="min-w-0 flex-1 overflow-x-auto rounded-xl border border-zinc-800 bg-zinc-950/70 shadow-inner shadow-black/20">
+        <div className="inline-block min-w-full px-2 sm:px-3">
+          <div className="relative border-b border-zinc-700/90" style={{ height: CHART_PLOT_H }}>
+            <div
+              className="pointer-events-none absolute inset-0 flex flex-col justify-between pb-0 pt-2"
+              aria-hidden
+            >
+              {[0, 1, 2, 3].map((i) => (
+                <div key={i} className="border-t border-dashed border-zinc-800/90" />
+              ))}
+            </div>
+            <div className="relative flex h-full items-end gap-1.5 pb-0 pt-3">
+              {rows.map((r) => {
+                const stackTotal = keys.reduce((s, k) => s + (Number(r[k.key]) || 0), 0);
+                const hPct = stackTotal > 0 ? (stackTotal / max) * 100 : 0;
+                const tip = `${r.date}\n${keys.map((k) => `${k.label}: ${Number(r[k.key]) || 0}`).join(" · ")}`;
+                return (
+                  <div
+                    key={r.date}
+                    className="group flex min-w-[12px] max-w-[3rem] flex-1 flex-col items-center justify-end"
+                    title={tip}
+                  >
+                    {stackTotal > 0 ? (
+                      <span className="mb-1 text-center text-[10px] font-semibold tabular-nums text-zinc-400 sm:text-[11px]">
+                        {stackTotal}
+                      </span>
+                    ) : (
+                      <span className="mb-1 h-[14px]" />
+                    )}
+                    <div
+                      className="flex w-full max-w-[2.75rem] flex-col-reverse overflow-hidden rounded-t-sm"
+                      style={{
+                        height: `${hPct}%`,
+                        minHeight: stackTotal > 0 ? 4 : 0,
+                      }}
+                    >
+                      {keys.map(({ key, className }) => {
+                        const v = Number(r[key]) || 0;
+                        if (v <= 0) {
+                          return null;
+                        }
+                        const pct = (v / stackTotal) * 100;
+                        return (
+                          <div
+                            key={String(key)}
+                            className={`${className} w-full transition group-hover:brightness-110`}
+                            style={{ height: `${pct}%`, minHeight: 2 }}
+                          />
+                        );
+                      })}
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+          <div
+            className="flex justify-stretch gap-1.5 border-t border-zinc-800/80 pt-2 pb-2"
+            style={{ minHeight: AXIS_H }}
+          >
+            {rows.map((r, i) => (
+              <div
+                key={`sx-${r.date}`}
+                className="flex min-w-[12px] max-w-[3rem] flex-1 flex-col items-center justify-start"
+              >
+                {showXAxisLabel(i, rows.length) ? (
+                  <span className="block max-h-[48px] w-[3.25rem] -rotate-45 text-center text-[10px] leading-tight text-zinc-500 sm:text-[11px]">
+                    {formatAxisDate(r.date)}
+                  </span>
+                ) : (
+                  <span className="block h-3 w-px" aria-hidden />
+                )}
+              </div>
+            ))}
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function Legend({ items }: { items: { label: string; className: string }[] }) {
+  return (
+    <div className="mt-3 flex flex-wrap gap-x-5 gap-y-2 text-xs">
+      {items.map(({ label, className }) => (
+        <span key={label} className="inline-flex items-center gap-2 text-zinc-400">
+          <span className={`h-3 w-3 shrink-0 rounded-sm ${className}`} />
+          <span className="leading-tight">{label}</span>
+        </span>
+      ))}
+    </div>
+  );
+}
+
+function SectionIntro({
+  title,
+  children,
+}: {
+  title: string;
+  children: ReactNode;
+}) {
+  return (
+    <>
+      <h2 className="text-base font-semibold tracking-tight text-zinc-100">{title}</h2>
+      <div className="mt-2 text-sm leading-relaxed text-zinc-500">{children}</div>
+    </>
+  );
 }
 
 function toNum(v: unknown): number {
@@ -100,6 +394,9 @@ function normalizePayload(raw: AnalyticsPayload & Record<string, unknown>): Anal
     server5xx: toNum(c.server5xx),
     noStatus: toNum(c.noStatus),
     navErrors: toNum(c.navErrors),
+    collabworkJobClosed: toNum(c.collabworkJobClosed),
+    finalUrlOther: toNum(c.finalUrlOther),
+    finalUrlNull: toNum(c.finalUrlNull),
   });
   const mapBatch = (b: Record<string, unknown>): BatchDay => ({
     date: String(b.date),
@@ -119,6 +416,9 @@ function normalizePayload(raw: AnalyticsPayload & Record<string, unknown>): Anal
       clicks: toNum(totalsRaw?.clicks),
       jobsHarvested: toNum(totalsRaw?.jobsHarvested),
       distinctBatches: toNum(totalsRaw?.distinctBatches),
+      collabworkJobClosed: toNum(totalsRaw?.collabworkJobClosed),
+      finalUrlOther: toNum(totalsRaw?.finalUrlOther),
+      finalUrlNull: toNum(totalsRaw?.finalUrlNull),
     },
   };
 }
@@ -167,6 +467,23 @@ export default function AnalyticsPage() {
     [rows],
   );
 
+  const maxDestStack = useMemo(
+    () =>
+      Math.max(
+        1,
+        ...rows.map((r) => DEST_KEYS.reduce((s, { key }) => s + r[key], 0)),
+      ),
+    [rows],
+  );
+
+  const closedSharePct = useMemo(() => {
+    const t = data?.totals;
+    if (!t || t.clicks <= 0) {
+      return null;
+    }
+    return Math.round((t.collabworkJobClosed / t.clicks) * 1000) / 10;
+  }, [data?.totals]);
+
   return (
     <div className="min-h-full bg-zinc-950 text-zinc-100">
       <div className="mx-auto max-w-6xl px-4 py-10 sm:px-6 lg:px-8">
@@ -190,8 +507,12 @@ export default function AnalyticsPage() {
           </h1>
           <p className="mt-3 max-w-2xl text-sm leading-relaxed text-zinc-400">
             Daily aggregates from Supabase (<code className="text-zinc-500">click_logs</code>,{" "}
-            <code className="text-zinc-500">jobs_fetched</code>), UTC dates. Run migration{" "}
-            <code className="text-zinc-500">002_analytics_timeseries.sql</code> if the API errors.
+            <code className="text-zinc-500">jobs_fetched</code>), UTC dates. Final URL is split into:{" "}
+            <span className="text-zinc-300">app.collabwork.com</span> with{" "}
+            <code className="text-zinc-500">job=closed</code> (e.g. listings that resolve to a closed job
+            page) vs other destinations vs missing URL. Re-run{" "}
+            <code className="text-zinc-500">002_analytics_timeseries.sql</code> after pulling changes if the
+            API errors.
           </p>
         </header>
 
@@ -233,18 +554,39 @@ export default function AnalyticsPage() {
         ) : null}
 
         {data?.totals ? (
-          <div className="mb-10 grid gap-4 sm:grid-cols-3">
-            <div className="rounded-xl border border-zinc-800 bg-zinc-900/40 px-5 py-4">
-              <p className="text-xs font-medium uppercase tracking-wide text-zinc-500">Clicks traced</p>
-              <p className="mt-1 text-2xl font-semibold text-white">{data.totals.clicks}</p>
+          <div className="mb-10 space-y-4">
+            <div className="grid gap-4 sm:grid-cols-3">
+              <div className="rounded-xl border border-zinc-800 bg-zinc-900/40 px-5 py-4">
+                <p className="text-xs font-medium uppercase tracking-wide text-zinc-500">Clicks traced</p>
+                <p className="mt-1 text-2xl font-semibold text-white">{data.totals.clicks}</p>
+              </div>
+              <div className="rounded-xl border border-zinc-800 bg-zinc-900/40 px-5 py-4">
+                <p className="text-xs font-medium uppercase tracking-wide text-zinc-500">Jobs harvested</p>
+                <p className="mt-1 text-2xl font-semibold text-white">{data.totals.jobsHarvested}</p>
+              </div>
+              <div className="rounded-xl border border-zinc-800 bg-zinc-900/40 px-5 py-4">
+                <p className="text-xs font-medium uppercase tracking-wide text-zinc-500">Distinct batches</p>
+                <p className="mt-1 text-2xl font-semibold text-white">{data.totals.distinctBatches}</p>
+              </div>
             </div>
-            <div className="rounded-xl border border-zinc-800 bg-zinc-900/40 px-5 py-4">
-              <p className="text-xs font-medium uppercase tracking-wide text-zinc-500">Jobs harvested</p>
-              <p className="mt-1 text-2xl font-semibold text-white">{data.totals.jobsHarvested}</p>
-            </div>
-            <div className="rounded-xl border border-zinc-800 bg-zinc-900/40 px-5 py-4">
-              <p className="text-xs font-medium uppercase tracking-wide text-zinc-500">Distinct batches</p>
-              <p className="mt-1 text-2xl font-semibold text-white">{data.totals.distinctBatches}</p>
+            <div className="grid gap-4 sm:grid-cols-3">
+              <div className="rounded-xl border border-rose-900/40 bg-rose-950/20 px-5 py-4">
+                <p className="text-xs font-medium uppercase tracking-wide text-rose-200/80">
+                  Ended on CollabWORK · job=closed
+                </p>
+                <p className="mt-1 text-2xl font-semibold text-rose-100">{data.totals.collabworkJobClosed}</p>
+                {closedSharePct != null ? (
+                  <p className="mt-1 text-xs text-rose-200/60">{closedSharePct}% of clicks in range</p>
+                ) : null}
+              </div>
+              <div className="rounded-xl border border-zinc-800 bg-zinc-900/40 px-5 py-4">
+                <p className="text-xs font-medium uppercase tracking-wide text-zinc-500">Other final URL</p>
+                <p className="mt-1 text-2xl font-semibold text-white">{data.totals.finalUrlOther}</p>
+              </div>
+              <div className="rounded-xl border border-zinc-800 bg-zinc-900/40 px-5 py-4">
+                <p className="text-xs font-medium uppercase tracking-wide text-zinc-500">No final URL</p>
+                <p className="mt-1 text-2xl font-semibold text-white">{data.totals.finalUrlNull}</p>
+              </div>
             </div>
           </div>
         ) : null}
@@ -253,104 +595,77 @@ export default function AnalyticsPage() {
           <p className="text-sm text-zinc-500">Loading…</p>
         ) : rows.length > 0 ? (
           <>
-            <section className="mb-12 rounded-2xl border border-zinc-800 bg-zinc-900/30 p-6">
-              <h2 className="text-sm font-semibold text-zinc-200">Clicks per day</h2>
-              <p className="mt-1 text-xs text-zinc-500">Height = volume; labels are MM/DD (UTC).</p>
-              <div className="mt-6 flex h-52 items-end gap-px sm:gap-1">
-                {rows.map((r) => (
-                  <div
-                    key={r.date}
-                    className="flex min-w-0 flex-1 flex-col items-center justify-end"
-                    title={`${r.date}: ${r.clicks} clicks`}
-                  >
-                    <div
-                      className="w-full max-w-[28px] rounded-t bg-emerald-500/70 transition hover:bg-emerald-400/80"
-                      style={{ height: `${(r.clicks / maxClicks) * 100}%`, minHeight: r.clicks > 0 ? 4 : 0 }}
-                    />
-                    <span className="mt-2 hidden text-[10px] text-zinc-600 sm:block">
-                      {formatShortDate(r.date)}
-                    </span>
-                  </div>
-                ))}
+            <section className="mb-12 rounded-2xl border border-zinc-800 bg-zinc-900/40 p-5 sm:p-7">
+              <SectionIntro title="Clicks per day">
+                <p>
+                  Bar height is proportional to trace count. Y-axis is linear (0 → max). Dates are{" "}
+                  <strong className="text-zinc-400">UTC</strong>. Scroll horizontally on narrow screens when
+                  the range has many days.
+                </p>
+              </SectionIntro>
+              <div className="mt-6">
+                <SimpleBarChart
+                  rows={rows}
+                  maxValue={maxClicks}
+                  getValue={(r) => r.clicks}
+                  barClassName="bg-emerald-500/75 shadow-sm shadow-emerald-900/30"
+                  unit="clicks"
+                />
               </div>
             </section>
 
-            <section className="mb-12 rounded-2xl border border-zinc-800 bg-zinc-900/30 p-6">
-              <h2 className="text-sm font-semibold text-zinc-200">HTTP outcome mix (per day)</h2>
-              <p className="mt-1 text-xs text-zinc-500">
-                Stacked counts from final <code className="text-zinc-600">status_code</code> and navigation errors.
-                Categories are not mutually exclusive (e.g. error + status).
-              </p>
-              <div className="mt-4 flex flex-wrap gap-3 text-xs">
-                {STACK_KEYS.map(({ label, className }) => (
-                  <span key={label} className="flex items-center gap-1.5 text-zinc-400">
-                    <span className={`h-2.5 w-2.5 rounded-sm ${className}`} />
-                    {label}
-                  </span>
-                ))}
-              </div>
-              <div className="mt-6 flex h-56 items-end gap-px sm:gap-1">
-                {rows.map((r) => {
-                  const stackTotal = STACK_KEYS.reduce((s, { key }) => s + r[key], 0);
-                  return (
-                    <div
-                      key={r.date}
-                      className="flex min-w-0 flex-1 flex-col items-center justify-end"
-                      title={`${r.date}`}
-                    >
-                      <div
-                        className="flex w-full max-w-[28px] flex-col-reverse overflow-hidden rounded-t"
-                        style={{
-                          height: `${stackTotal > 0 ? (stackTotal / maxStack) * 100 : 0}%`,
-                          minHeight: stackTotal > 0 ? 4 : 0,
-                        }}
-                      >
-                        {STACK_KEYS.map(({ key, className }) => {
-                          const v = r[key];
-                          if (v <= 0) {
-                            return null;
-                          }
-                          const pct = (v / stackTotal) * 100;
-                          return (
-                            <div
-                              key={key}
-                              className={`${className} w-full`}
-                              style={{ height: `${pct}%`, minHeight: 2 }}
-                              title={`${key}: ${v}`}
-                            />
-                          );
-                        })}
-                      </div>
-                      <span className="mt-2 hidden text-[10px] text-zinc-600 sm:block">
-                        {formatShortDate(r.date)}
-                      </span>
-                    </div>
-                  );
-                })}
+            <section className="mb-12 rounded-2xl border border-zinc-800 bg-zinc-900/40 p-5 sm:p-7">
+              <SectionIntro title="Final URL: CollabWORK job=closed vs other">
+                <p>
+                  From <code className="text-zinc-400">final_destination_url</code>.{" "}
+                  <strong className="text-rose-200/90">Closed</strong> ={" "}
+                  <code className="text-zinc-400">app.collabwork.com</code> and query contains{" "}
+                  <code className="text-zinc-400">job=closed</code>. The three buckets partition every click.
+                  Number above each bar is the daily total.
+                </p>
+              </SectionIntro>
+              <Legend items={DEST_KEYS} />
+              <div className="mt-5">
+                <StackedBarChart
+                  rows={rows}
+                  maxStack={maxDestStack}
+                  keys={DEST_KEYS}
+                />
               </div>
             </section>
 
-            <section className="rounded-2xl border border-zinc-800 bg-zinc-900/30 p-6">
-              <h2 className="text-sm font-semibold text-zinc-200">Jobs harvested per day</h2>
-              <div className="mt-6 flex h-52 items-end gap-px sm:gap-1">
-                {rows.map((r) => (
-                  <div
-                    key={`j-${r.date}`}
-                    className="flex min-w-0 flex-1 flex-col items-center justify-end"
-                    title={`${r.date}: ${r.jobsHarvested} jobs, ${r.batches} batches`}
-                  >
-                    <div
-                      className="w-full max-w-[28px] rounded-t bg-sky-500/60 transition hover:bg-sky-400/70"
-                      style={{
-                        height: `${(r.jobsHarvested / maxJobs) * 100}%`,
-                        minHeight: r.jobsHarvested > 0 ? 4 : 0,
-                      }}
-                    />
-                    <span className="mt-2 hidden text-[10px] text-zinc-600 sm:block">
-                      {formatShortDate(r.date)}
-                    </span>
-                  </div>
-                ))}
+            <section className="mb-12 rounded-2xl border border-zinc-800 bg-zinc-900/40 p-5 sm:p-7">
+              <SectionIntro title="HTTP outcome mix (per day)">
+                <p>
+                  Stacked counts from final <code className="text-zinc-400">status_code</code> and navigation
+                  errors. Categories can overlap (e.g. recorded status plus a trace error in{" "}
+                  <code className="text-zinc-400">extra_tracking_data</code>).
+                </p>
+              </SectionIntro>
+              <Legend items={STACK_KEYS} />
+              <div className="mt-5">
+                <StackedBarChart rows={rows} maxStack={maxStack} keys={STACK_KEYS} />
+              </div>
+            </section>
+
+            <section className="rounded-2xl border border-zinc-800 bg-zinc-900/40 p-5 sm:p-7">
+              <SectionIntro title="Jobs harvested per day">
+                <p>
+                  Rows inserted into <code className="text-zinc-400">jobs_fetched</code> per UTC day. Hover a
+                  column for batch + job counts.
+                </p>
+              </SectionIntro>
+              <div className="mt-6">
+                <SimpleBarChart
+                  rows={rows}
+                  maxValue={maxJobs}
+                  getValue={(r) => r.jobsHarvested}
+                  barClassName="bg-sky-500/70 shadow-sm shadow-sky-900/30"
+                  unit="jobs"
+                  formatTitle={(r, v) =>
+                    `${r.date} — ${v} jobs harvested · ${r.batches} batch(es)`
+                  }
+                />
               </div>
             </section>
           </>

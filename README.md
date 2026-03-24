@@ -10,7 +10,7 @@ This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-
 
 ### Analytics
 
-Open **`/analytics`** (or use the **Analytics** button on the home dashboard). Charts use **UTC calendar days** for the selected range (7 / 30 / 90 days). Data comes from [`/api/analytics/timeseries`](./app/api/analytics/timeseries/route.ts) via Supabase RPC `link_validator_analytics_timeseries`.
+Open **`/analytics`** (or use the **Analytics** button on the home dashboard). Charts use **UTC calendar days** for the selected range (7 / 30 / 90 days). Data comes from [`/api/analytics/timeseries`](./app/api/analytics/timeseries/route.ts) via Supabase RPC `link_validator_analytics_timeseries`. The RPC classifies **`final_destination_url`** into: **CollabWORK `app.collabwork.com` + `job=closed`** (closed job landing, e.g. [app.collabwork.com/?job=closed](https://app.collabwork.com/?job=closed)), **any other non-empty URL**, and **no URL** (null/empty). If you deployed analytics before this split existed, re-run the latest [`supabase/migrations/002_analytics_timeseries.sql`](./supabase/migrations/002_analytics_timeseries.sql) in the Supabase SQL editor to replace the function.
 
 ### Debugging failed clicks
 

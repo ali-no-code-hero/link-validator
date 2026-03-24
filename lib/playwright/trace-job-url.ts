@@ -1,4 +1,4 @@
-import type { Frame, Page, Request, Response } from "playwright-core";
+import type { Browser, BrowserContext, Frame, Page, Request, Response } from "playwright-core";
 import type { RedirectChainEntry } from "@/lib/types/database";
 import { compareDirectAndProxyEgress, fetchOutboundIp } from "@/lib/outbound-ip";
 import { launchChromiumBrowser } from "@/lib/playwright/launch-browser";
@@ -29,6 +29,45 @@ function parsePositiveIntEnv(name: string, fallback: number): number {
 const GOTO_TIMEOUT_MS = parsePositiveIntEnv("LINK_VALIDATOR_GOTO_TIMEOUT_MS", 70_000);
 const GOTO_MAX_ATTEMPTS = Math.max(1, parsePositiveIntEnv("LINK_VALIDATOR_GOTO_MAX_ATTEMPTS", 2));
 const GOTO_RETRY_BACKOFF_MS = parsePositiveIntEnv("LINK_VALIDATOR_GOTO_RETRY_BACKOFF_MS", 3500);
+
+const MAX_BROWSER_SETUP_ATTEMPTS = Math.max(
+  2,
+  parsePositiveIntEnv("LINK_VALIDATOR_BROWSER_SETUP_MAX_ATTEMPTS", 4),
+);
+const BROWSER_SETUP_RETRY_BACKOFF_MS = parsePositiveIntEnv(
+  "LINK_VALIDATOR_BROWSER_SETUP_RETRY_BACKOFF_MS",
+  2000,
+);
+
+function errorMessageFromUnknown(e: unknown): string {
+  if (e instanceof Error && typeof e.message === "string" && e.message.length > 0) {
+    return e.message;
+  }
+  if (typeof e === "string") {
+    return e;
+  }
+  if (e && typeof e === "object" && "message" in e) {
+    const m = (e as { message?: unknown }).message;
+    if (typeof m === "string" && m.length > 0) {
+      return m;
+    }
+  }
+  try {
+    return JSON.stringify(e);
+  } catch {
+    return String(e);
+  }
+}
+
+function isRetriableBrowserSetupError(message: string): boolean {
+  return (
+    /browserContext\.newPage/i.test(message) ||
+    /has been closed/i.test(message) ||
+    /Target page, context or browser has been closed/i.test(message) ||
+    /Target closed/i.test(message) ||
+    /Browser has been closed/i.test(message)
+  );
+}
 
 function isRetriableGotoError(message: string): boolean {
   return (
@@ -183,6 +222,8 @@ export async function traceJobUrl(initialUrl: string, deviceId: string): Promise
     gotoTimeoutMs: GOTO_TIMEOUT_MS,
     gotoMaxAttempts: GOTO_MAX_ATTEMPTS,
     gotoRetryBackoffMs: GOTO_RETRY_BACKOFF_MS,
+    browserSetupMaxAttempts: MAX_BROWSER_SETUP_ATTEMPTS,
+    browserSetupRetryBackoffMs: BROWSER_SETUP_RETRY_BACKOFF_MS,
     ...getTraceBrowserProfileForExtras(),
     ...(proxyUrl ? { proxyServer: proxyEndpointForLog(proxyUrl) } : {}),
   };
@@ -217,17 +258,63 @@ export async function traceJobUrl(initialUrl: string, deviceId: string): Promise
     viaProxy: Boolean(proxyUrl),
   });
 
-  const browser = await launchChromiumBrowser();
+  let browser: Browser | undefined;
+  /** Set in setup loop before the trace `try` (TS: definite assignment). */
+  let context!: BrowserContext;
+  let page!: Page;
+
+  for (let setupAttempt = 0; setupAttempt < MAX_BROWSER_SETUP_ATTEMPTS; setupAttempt++) {
+    if (browser) {
+      await browser.close().catch(() => undefined);
+      browser = undefined;
+    }
+    try {
+      browser = await launchChromiumBrowser();
+      await browser.version();
+      const ctx = await browser.newContext({
+        ...getTraceBrowserContextOptions(REALISTIC_BROWSER_USER_AGENT),
+        ...(playwrightProxy ? { proxy: playwrightProxy } : {}),
+      });
+      ctx.setDefaultNavigationTimeout(GOTO_TIMEOUT_MS);
+      ctx.setDefaultTimeout(GOTO_TIMEOUT_MS);
+      const pg = await ctx.newPage();
+      pg.setDefaultNavigationTimeout(GOTO_TIMEOUT_MS);
+      pg.setDefaultTimeout(GOTO_TIMEOUT_MS);
+      context = ctx;
+      page = pg;
+      break;
+    } catch (setupErr) {
+      const message = errorMessageFromUnknown(setupErr);
+      if (browser) {
+        await browser.close().catch(() => undefined);
+        browser = undefined;
+      }
+      const retriable = isRetriableBrowserSetupError(message);
+      if (retriable && setupAttempt < MAX_BROWSER_SETUP_ATTEMPTS - 1) {
+        extra.browserSetupRetry = true;
+        extra.browserSetupRetryAttempt = setupAttempt + 2;
+        extra.browserSetupLastError = message;
+        logWarn("trace", "browser_setup_retry", {
+          attempt: setupAttempt + 1,
+          nextBackoffMs: BROWSER_SETUP_RETRY_BACKOFF_MS,
+          messagePreview: message.slice(0, 280),
+          note:
+            "Often /tmp full on serverless; relaunching Chromium. If this persists, raise Vercel memory or reduce concurrent work.",
+        });
+        await new Promise<void>((resolve) => {
+          setTimeout(resolve, BROWSER_SETUP_RETRY_BACKOFF_MS);
+        });
+        continue;
+      }
+      throw setupErr;
+    }
+  }
+
+  if (!browser) {
+    throw new Error("traceJobUrl: browser setup failed after retries");
+  }
+
   try {
-    const context = await browser.newContext({
-      ...getTraceBrowserContextOptions(REALISTIC_BROWSER_USER_AGENT),
-      ...(playwrightProxy ? { proxy: playwrightProxy } : {}),
-    });
-    context.setDefaultNavigationTimeout(GOTO_TIMEOUT_MS);
-    context.setDefaultTimeout(GOTO_TIMEOUT_MS);
-    const page = await context.newPage();
-    page.setDefaultNavigationTimeout(GOTO_TIMEOUT_MS);
-    page.setDefaultTimeout(GOTO_TIMEOUT_MS);
 
     /** Ordered list of every main-frame *document* response (each redirect hop is usually one). */
     const mainFrameDocumentHops: RedirectChainEntry[] = [];
@@ -417,6 +504,6 @@ export async function traceJobUrl(initialUrl: string, deviceId: string): Promise
 
     return result;
   } finally {
-    await browser.close();
+    await browser?.close().catch(() => undefined);
   }
 }

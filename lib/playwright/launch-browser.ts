@@ -29,6 +29,24 @@ function sleep(ms: number): Promise<void> {
   });
 }
 
+function argFlagPrefix(arg: string): string {
+  return arg.split("=")[0] ?? arg;
+}
+
+/** Replace Sparticuz disk/media cache flags; add --disable-dev-shm-usage when missing (serverless / small /tmp). */
+function mergeSparticuzArgsForServerless(baseArgs: string[]): string[] {
+  const stripPrefixes = ["--disk-cache-size", "--media-cache-size"];
+  const filtered = baseArgs.filter((a) => {
+    const f = argFlagPrefix(a);
+    return !stripPrefixes.some((p) => f === p || a.startsWith(`${p}=`));
+  });
+  const out = [...filtered, "--disk-cache-size=1", "--media-cache-size=0"];
+  if (!out.some((x) => argFlagPrefix(x) === "--disable-dev-shm-usage")) {
+    out.push("--disable-dev-shm-usage");
+  }
+  return out;
+}
+
 /** Vercel: concurrent lambdas racing Sparticuz /tmp extract → ETXTBSY; also transient spawn failures. */
 function isRetriableLaunchError(message: string): boolean {
   return (
@@ -60,10 +78,22 @@ async function launchSparticuzChromium(): Promise<Browser> {
     ...hints,
     executablePathSuffix: executablePath.slice(-80),
   });
+  /**
+   * Sparticuz defaults include large `--disk-cache-size` (e.g. 32MB). Appending `--disk-cache-size=1`
+   * without removing the existing flag is a no-op — we must strip then re-append so /tmp stays tiny.
+   */
+  const mergedArgs = mergeSparticuzArgsForServerless(chromiumPack.args as string[]);
   const browser = await chromium.launch({
-    args: chromiumPack.args,
+    args: mergedArgs,
     executablePath,
     headless: true,
+    ...(process.env.VERCEL
+      ? {
+          handleSIGINT: false,
+          handleSIGTERM: false,
+          handleSIGHUP: false,
+        }
+      : {}),
   });
   logInfo("playwright.launch", "launched_ok", hints);
   return browser;
