@@ -128,6 +128,41 @@ function showXAxisLabel(index: number, total: number): boolean {
 
 const CHART_PLOT_H = 200;
 const AXIS_H = 52;
+/** Reserve space above bars for value labels so bar height uses a fixed pixel scale (avoids broken % inside flex). */
+const CHART_VALUE_ROW_H = 22;
+
+type ChartTooltipProps = {
+  label: string;
+  lines: string[];
+  children: ReactNode;
+  /** Stacked bars have no inner button; make the column focusable for keyboard tooltip. */
+  keyboardColumn?: boolean;
+};
+
+/** Hover or keyboard focus (focus-within) shows tooltip. */
+function ChartTooltip({ label, lines, children, keyboardColumn }: ChartTooltipProps) {
+  return (
+    <div
+      tabIndex={keyboardColumn ? 0 : undefined}
+      className="group/chartcol relative flex min-w-[12px] max-w-[3rem] flex-1 flex-col outline-none focus-visible:ring-2 focus-visible:ring-emerald-500/60 focus-visible:ring-offset-2 focus-visible:ring-offset-zinc-950"
+    >
+      {children}
+      <div
+        role="tooltip"
+        className="pointer-events-none absolute bottom-full left-1/2 z-20 mb-1 w-max max-w-[min(16rem,calc(100vw-2rem))] -translate-x-1/2 rounded-lg border border-zinc-600 bg-zinc-900 px-2.5 py-2 text-left text-[11px] leading-snug text-zinc-100 opacity-0 shadow-xl shadow-black/50 transition-opacity duration-150 group-hover/chartcol:opacity-100 group-focus-within/chartcol:opacity-100"
+      >
+        <p className="font-semibold text-emerald-200/95">{label}</p>
+        <ul className="mt-1 space-y-0.5 text-zinc-300">
+          {lines.map((line, i) => (
+            <li key={`${i}-${line.slice(0, 24)}`} className="font-mono text-[10px] text-zinc-400">
+              {line}
+            </li>
+          ))}
+        </ul>
+      </div>
+    </div>
+  );
+}
 
 /** Shared time-series column chart: Y ticks, grid, scroll on dense ranges, values on bars. */
 function SimpleBarChart({
@@ -148,6 +183,7 @@ function SimpleBarChart({
 }) {
   const max = Math.max(1, maxValue);
   const mid = Math.round(max / 2);
+  const plotInnerH = CHART_PLOT_H - CHART_VALUE_ROW_H;
   return (
     <div className="flex flex-col gap-2 sm:flex-row sm:items-stretch sm:gap-3">
       <div
@@ -179,32 +215,45 @@ function SimpleBarChart({
                 <div key={i} className="border-t border-dashed border-zinc-800/90" />
               ))}
             </div>
-            <div className="relative flex h-full items-end justify-stretch gap-1.5 pb-0 pt-3">
+            <div
+              className="relative flex items-end justify-stretch gap-1.5"
+              style={{ height: CHART_PLOT_H, paddingTop: 8 }}
+            >
               {rows.map((r) => {
                 const v = getValue(r);
-                const pct = (v / max) * 100;
+                const barPx = Math.round((v / max) * plotInnerH);
+                const h = Math.max(v > 0 ? 3 : 0, barPx);
                 const tip = formatTitle ? formatTitle(r, v) : `${r.date} — ${v} ${unit}`;
                 return (
-                  <div
-                    key={r.date}
-                    className="group flex min-w-[12px] max-w-[3rem] flex-1 flex-col items-center justify-end"
-                    title={tip}
-                  >
-                    {v > 0 ? (
-                      <span className="mb-1 text-center text-[10px] font-semibold tabular-nums text-zinc-300 sm:text-[11px]">
-                        {v}
-                      </span>
-                    ) : (
-                      <span className="mb-1 h-[14px] shrink-0" />
-                    )}
-                    <div
-                      className={`w-full max-w-[2.75rem] rounded-t-sm ${barClassName} transition group-hover:brightness-110`}
-                      style={{
-                        height: `${pct}%`,
-                        minHeight: v > 0 ? 4 : 0,
-                      }}
-                    />
-                  </div>
+                  <ChartTooltip key={r.date} label={formatAxisDate(r.date)} lines={[tip, `Scale: 0–${max} ${unit}`]}>
+                    <div className="flex h-full min-h-0 min-w-[12px] max-w-[3rem] flex-1 flex-col items-center justify-end">
+                      <div
+                        className="flex w-full flex-col items-center justify-end"
+                        style={{ height: CHART_VALUE_ROW_H }}
+                      >
+                        {v > 0 ? (
+                          <span className="text-center text-[10px] font-semibold tabular-nums text-zinc-300 sm:text-[11px]">
+                            {v}
+                          </span>
+                        ) : null}
+                      </div>
+                      <div
+                        className="flex w-full flex-col justify-end"
+                        style={{ height: plotInnerH }}
+                      >
+                        {v > 0 ? (
+                          <button
+                            type="button"
+                            aria-label={tip}
+                            className={`group w-full max-w-[2.75rem] self-center rounded-t-sm ${barClassName} cursor-pointer transition hover:brightness-110 focus:outline-none focus-visible:ring-2 focus-visible:ring-emerald-500/80`}
+                            style={{ height: h }}
+                          />
+                        ) : (
+                          <div className="w-full max-w-[2.75rem] self-center" style={{ height: 0 }} aria-hidden />
+                        )}
+                      </div>
+                    </div>
+                  </ChartTooltip>
                 );
               })}
             </div>
@@ -247,6 +296,7 @@ function StackedBarChart({
 }) {
   const max = Math.max(1, maxStack);
   const mid = Math.round(max / 2);
+  const plotInnerH = CHART_PLOT_H - CHART_VALUE_ROW_H;
   return (
     <div className="flex flex-col gap-2 sm:flex-row sm:items-stretch sm:gap-3">
       <div
@@ -275,47 +325,58 @@ function StackedBarChart({
                 <div key={i} className="border-t border-dashed border-zinc-800/90" />
               ))}
             </div>
-            <div className="relative flex h-full items-end gap-1.5 pb-0 pt-3">
+            <div className="relative flex items-end gap-1.5" style={{ height: CHART_PLOT_H, paddingTop: 8 }}>
               {rows.map((r) => {
                 const stackTotal = keys.reduce((s, k) => s + (Number(r[k.key]) || 0), 0);
-                const hPct = stackTotal > 0 ? (stackTotal / max) * 100 : 0;
-                const tip = `${r.date}\n${keys.map((k) => `${k.label}: ${Number(r[k.key]) || 0}`).join(" · ")}`;
+                const totalBarPx = Math.round((stackTotal / max) * plotInnerH);
+                const stackPx = Math.max(stackTotal > 0 ? 3 : 0, totalBarPx);
+                const lines = [
+                  `Total: ${stackTotal}`,
+                  ...keys.map((k) => `${k.label}: ${Number(r[k.key]) || 0}`),
+                  `Scale: 0–${max}`,
+                ];
                 return (
-                  <div
-                    key={r.date}
-                    className="group flex min-w-[12px] max-w-[3rem] flex-1 flex-col items-center justify-end"
-                    title={tip}
-                  >
-                    {stackTotal > 0 ? (
-                      <span className="mb-1 text-center text-[10px] font-semibold tabular-nums text-zinc-400 sm:text-[11px]">
-                        {stackTotal}
-                      </span>
-                    ) : (
-                      <span className="mb-1 h-[14px]" />
-                    )}
-                    <div
-                      className="flex w-full max-w-[2.75rem] flex-col-reverse overflow-hidden rounded-t-sm"
-                      style={{
-                        height: `${hPct}%`,
-                        minHeight: stackTotal > 0 ? 4 : 0,
-                      }}
-                    >
-                      {keys.map(({ key, className }) => {
-                        const v = Number(r[key]) || 0;
-                        if (v <= 0) {
-                          return null;
-                        }
-                        const pct = (v / stackTotal) * 100;
-                        return (
-                          <div
-                            key={String(key)}
-                            className={`${className} w-full transition group-hover:brightness-110`}
-                            style={{ height: `${pct}%`, minHeight: 2 }}
-                          />
-                        );
-                      })}
+                  <ChartTooltip keyboardColumn key={r.date} label={formatAxisDate(r.date)} lines={lines}>
+                    <div className="flex h-full min-h-0 min-w-[12px] max-w-[3rem] flex-1 flex-col items-center justify-end">
+                      <div
+                        className="flex w-full flex-col items-center justify-end"
+                        style={{ height: CHART_VALUE_ROW_H }}
+                      >
+                        {stackTotal > 0 ? (
+                          <span className="text-center text-[10px] font-semibold tabular-nums text-zinc-400 sm:text-[11px]">
+                            {stackTotal}
+                          </span>
+                        ) : null}
+                      </div>
+                      <div
+                        className="flex w-full flex-col justify-end"
+                        style={{ height: plotInnerH }}
+                      >
+                        <div
+                          className="flex w-full max-w-[2.75rem] flex-col-reverse overflow-hidden rounded-t-sm self-center"
+                          style={{ height: stackPx }}
+                        >
+                          {keys.map(({ key, className }) => {
+                            const v = Number(r[key]) || 0;
+                            if (v <= 0 || stackTotal <= 0) {
+                              return null;
+                            }
+                            return (
+                              <div
+                                key={String(key)}
+                                className={`${className} w-full min-h-[2px] transition hover:brightness-110`}
+                                style={{
+                                  flexGrow: v,
+                                  flexBasis: 0,
+                                  flexShrink: 0,
+                                }}
+                              />
+                            );
+                          })}
+                        </div>
+                      </div>
                     </div>
-                  </div>
+                  </ChartTooltip>
                 );
               })}
             </div>
@@ -598,9 +659,9 @@ export default function AnalyticsPage() {
             <section className="mb-12 rounded-2xl border border-zinc-800 bg-zinc-900/40 p-5 sm:p-7">
               <SectionIntro title="Clicks per day">
                 <p>
-                  Bar height is proportional to trace count. Y-axis is linear (0 → max). Dates are{" "}
-                  <strong className="text-zinc-400">UTC</strong>. Scroll horizontally on narrow screens when
-                  the range has many days.
+                  Bar height is proportional to trace count (pixel scale, 0 → max on the axis). Dates are{" "}
+                  <strong className="text-zinc-400">UTC</strong>. Hover or focus a bar for the exact value;
+                  scroll horizontally on narrow screens when the range has many days.
                 </p>
               </SectionIntro>
               <div className="mt-6">
@@ -621,7 +682,8 @@ export default function AnalyticsPage() {
                   <strong className="text-rose-200/90">Closed</strong> ={" "}
                   <code className="text-zinc-400">app.collabwork.com</code> and query contains{" "}
                   <code className="text-zinc-400">job=closed</code>. The three buckets partition every click.
-                  Number above each bar is the daily total.
+                  Number above each bar is the daily total. Hover a column (or Tab to focus) for a per-bucket
+                  breakdown.
                 </p>
               </SectionIntro>
               <Legend items={DEST_KEYS} />
@@ -639,7 +701,8 @@ export default function AnalyticsPage() {
                 <p>
                   Stacked counts from final <code className="text-zinc-400">status_code</code> and navigation
                   errors. Categories can overlap (e.g. recorded status plus a trace error in{" "}
-                  <code className="text-zinc-400">extra_tracking_data</code>).
+                  <code className="text-zinc-400">extra_tracking_data</code>). Hover or Tab-focus a column for
+                  counts per category.
                 </p>
               </SectionIntro>
               <Legend items={STACK_KEYS} />
