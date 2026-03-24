@@ -13,6 +13,7 @@ const nextConfig: NextConfig = {
     "playwright-extra",
     "puppeteer-extra-plugin-stealth",
     "puppeteer-extra-plugin-user-preferences",
+    "puppeteer-extra-plugin-user-data-dir",
     "undici",
   ],
   outputFileTracingIncludes: {
@@ -37,6 +38,8 @@ const nextConfig: NextConfig = {
       "./node_modules/puppeteer-extra-plugin-user-preferences/**/*",
       "./node_modules/puppeteer-extra-plugin-user-data-dir/**/*",
       "./node_modules/deepmerge/**/*",
+      "./node_modules/fs-extra/**/*",
+      "./node_modules/rimraf/**/*",
     ],
   },
 };

@@ -10,7 +10,11 @@ import type { PluginList } from "playwright-extra";
  */
 export function registerStealthEvasionResolutions(plugins: PluginList): void {
   const require = createRequire(join(process.cwd(), "package.json"));
-  // user-agent-override evasion depends on this virtual name (not only a package path).
+  // Transitive stealth deps use short virtual names; register before user-preferences.
+  plugins.setDependencyResolution(
+    "user-data-dir",
+    require("puppeteer-extra-plugin-user-data-dir"),
+  );
   plugins.setDependencyResolution(
     "user-preferences",
     require("puppeteer-extra-plugin-user-preferences"),
