@@ -43,6 +43,18 @@ const nextConfig: NextConfig = {
       "./node_modules/graceful-fs/**/*",
       "./node_modules/jsonfile/**/*",
       "./node_modules/rimraf/**/*",
+      // rimraf@3 requires glob at runtime for recursive delete (user-data-dir onDisconnected).
+      "./node_modules/glob/**/*",
+      "./node_modules/inflight/**/*",
+      "./node_modules/fs.realpath/**/*",
+      "./node_modules/minimatch/**/*",
+      "./node_modules/brace-expansion/**/*",
+      "./node_modules/balanced-match/**/*",
+      "./node_modules/concat-map/**/*",
+      "./node_modules/once/**/*",
+      "./node_modules/wrappy/**/*",
+      "./node_modules/path-is-absolute/**/*",
+      "./node_modules/inherits/**/*",
     ],
   },
 };
