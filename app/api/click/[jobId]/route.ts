@@ -4,7 +4,8 @@ import { traceJobUrl } from "@/lib/playwright/trace-job-url";
 import { logError, logInfo, logWarn, truncateUrl } from "@/lib/server-log";
 import { createServiceRoleClient } from "@/lib/supabase/server";
 
-export const maxDuration = 60;
+/** Allow egress + Chromium + long proxy redirect chains + one navigation retry (see LINK_VALIDATOR_GOTO_*). */
+export const maxDuration = 120;
 
 /** Playwright navigation finished without throwing (we captured hops / errors in extra). */
 function isTraceCompleted(extra: Record<string, unknown>): boolean {

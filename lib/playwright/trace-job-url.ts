@@ -14,43 +14,70 @@ import {
 } from "@/lib/browser-context-options";
 import { REALISTIC_BROWSER_USER_AGENT } from "@/lib/user-agent";
 
-const GOTO_TIMEOUT_MS = 50_000;
-const GOTO_INSUFFICIENT_RESOURCES_RETRIES = 2;
-const GOTO_RETRY_BACKOFF_MS = 2500;
 const MAX_RESPONSE_HEADER_KEYS = 24;
 
-async function gotoWithInsufficientResourcesRetry(
+function parsePositiveIntEnv(name: string, fallback: number): number {
+  const raw = process.env[name]?.trim();
+  if (!raw) {
+    return fallback;
+  }
+  const n = Number.parseInt(raw, 10);
+  return Number.isFinite(n) && n > 0 ? n : fallback;
+}
+
+/** Full navigation budget per attempt (redirect chain included). */
+const GOTO_TIMEOUT_MS = parsePositiveIntEnv("LINK_VALIDATOR_GOTO_TIMEOUT_MS", 70_000);
+const GOTO_MAX_ATTEMPTS = Math.max(1, parsePositiveIntEnv("LINK_VALIDATOR_GOTO_MAX_ATTEMPTS", 2));
+const GOTO_RETRY_BACKOFF_MS = parsePositiveIntEnv("LINK_VALIDATOR_GOTO_RETRY_BACKOFF_MS", 3500);
+
+function isRetriableGotoError(message: string): boolean {
+  return (
+    /ERR_INSUFFICIENT_RESOURCES/i.test(message) ||
+    /ERR_TIMED_OUT/i.test(message) ||
+    /ERR_CONNECTION_TIMED_OUT/i.test(message) ||
+    /ERR_CONNECTION_RESET/i.test(message) ||
+    /ERR_NETWORK_CHANGED/i.test(message) ||
+    /ERR_INTERNET_DISCONNECTED/i.test(message)
+  );
+}
+
+async function gotoWithRetries(
   page: Page,
   url: string,
   extra: Record<string, unknown>,
 ): Promise<Response | null> {
-  for (let i = 0; i < GOTO_INSUFFICIENT_RESOURCES_RETRIES; i++) {
+  for (let i = 0; i < GOTO_MAX_ATTEMPTS; i++) {
     if (i > 0) {
-      extra.gotoRetryAfterInsufficientResources = true;
       extra.gotoRetryAttempt = i + 1;
-      logWarn("trace.goto", "retry_after_insufficient_resources", {
+      extra.gotoRetryReason = extra.gotoRetryLastError ?? "unknown";
+      logWarn("trace.goto", "retry_navigation", {
         attempt: i + 1,
+        maxAttempts: GOTO_MAX_ATTEMPTS,
         backoffMs: GOTO_RETRY_BACKOFF_MS,
+        lastErrorPreview: String(extra.gotoRetryLastError ?? "").slice(0, 200),
       });
       await new Promise<void>((resolve) => {
         setTimeout(resolve, GOTO_RETRY_BACKOFF_MS);
       });
     }
     try {
-      return await page.goto(url, {
+      const res = await page.goto(url, {
         waitUntil: "domcontentloaded",
         timeout: GOTO_TIMEOUT_MS,
       });
+      delete extra.gotoRetryLastError;
+      return res;
     } catch (e) {
       const msg = e instanceof Error ? e.message : String(e);
-      const isInsufficient = /ERR_INSUFFICIENT_RESOURCES/i.test(msg);
-      if (isInsufficient && i < GOTO_INSUFFICIENT_RESOURCES_RETRIES - 1) {
+      extra.gotoRetryLastError = msg;
+      const retriable = isRetriableGotoError(msg);
+      if (retriable && i < GOTO_MAX_ATTEMPTS - 1) {
         continue;
       }
       throw e;
     }
   }
-  throw new Error("gotoWithInsufficientResourcesRetry: exhausted attempts");
+  throw new Error("gotoWithRetries: exhausted attempts");
 }
 
 /** Drop consecutive identical steps only (same url, status, type) — keeps real redirect repeats. */
@@ -149,6 +176,9 @@ export async function traceJobUrl(initialUrl: string, deviceId: string): Promise
     clientInstrumentation: "CollabWork Link Validator",
     deviceId,
     proxyUsed: Boolean(playwrightProxy),
+    gotoTimeoutMs: GOTO_TIMEOUT_MS,
+    gotoMaxAttempts: GOTO_MAX_ATTEMPTS,
+    gotoRetryBackoffMs: GOTO_RETRY_BACKOFF_MS,
     ...getTraceBrowserProfileForExtras(),
     ...(proxyUrl ? { proxyServer: proxyEndpointForLog(proxyUrl) } : {}),
   };
@@ -189,7 +219,11 @@ export async function traceJobUrl(initialUrl: string, deviceId: string): Promise
       ...getTraceBrowserContextOptions(REALISTIC_BROWSER_USER_AGENT),
       ...(playwrightProxy ? { proxy: playwrightProxy } : {}),
     });
+    context.setDefaultNavigationTimeout(GOTO_TIMEOUT_MS);
+    context.setDefaultTimeout(GOTO_TIMEOUT_MS);
     const page = await context.newPage();
+    page.setDefaultNavigationTimeout(GOTO_TIMEOUT_MS);
+    page.setDefaultTimeout(GOTO_TIMEOUT_MS);
 
     /** Ordered list of every main-frame *document* response (each redirect hop is usually one). */
     const mainFrameDocumentHops: RedirectChainEntry[] = [];
@@ -242,11 +276,7 @@ export async function traceJobUrl(initialUrl: string, deviceId: string): Promise
         timeoutMs: GOTO_TIMEOUT_MS,
       });
 
-      const response: Response | null = await gotoWithInsufficientResourcesRetry(
-        page,
-        initialUrl,
-        extra,
-      );
+      const response: Response | null = await gotoWithRetries(page, initialUrl, extra);
 
       final_destination_url = page.url();
       status_code = response?.status() ?? null;
