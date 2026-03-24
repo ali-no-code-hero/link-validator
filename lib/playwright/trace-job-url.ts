@@ -37,7 +37,11 @@ function isRetriableGotoError(message: string): boolean {
     /ERR_CONNECTION_TIMED_OUT/i.test(message) ||
     /ERR_CONNECTION_RESET/i.test(message) ||
     /ERR_NETWORK_CHANGED/i.test(message) ||
-    /ERR_INTERNET_DISCONNECTED/i.test(message)
+    /ERR_INTERNET_DISCONNECTED/i.test(message) ||
+    // HTTP(S) proxy CONNECT tunnel failed — common with residential rotation; retry may use a fresh path.
+    /ERR_TUNNEL_CONNECTION_FAILED/i.test(message) ||
+    /ERR_PROXY_CONNECTION_FAILED/i.test(message) ||
+    /ERR_SOCKS_CONNECTION_FAILED/i.test(message)
   );
 }
 
