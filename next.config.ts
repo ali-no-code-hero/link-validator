@@ -12,6 +12,7 @@ const nextConfig: NextConfig = {
     "playwright",
     "playwright-extra",
     "puppeteer-extra-plugin-stealth",
+    "puppeteer-extra-plugin-user-preferences",
     "undici",
   ],
   outputFileTracingIncludes: {
@@ -34,6 +35,8 @@ const nextConfig: NextConfig = {
       // Stealth loads each evasion via require(); trace must ship the full tree.
       "./node_modules/puppeteer-extra-plugin-stealth/evasions/**/*",
       "./node_modules/puppeteer-extra-plugin-user-preferences/**/*",
+      "./node_modules/puppeteer-extra-plugin-user-data-dir/**/*",
+      "./node_modules/deepmerge/**/*",
     ],
   },
 };
